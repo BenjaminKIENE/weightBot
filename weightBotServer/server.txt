@@ -1,0 +1,368 @@
+const net = require('net');
+const ip = require('ip');
+var mysql = require('mysql');
+var express = require("express");
+var bodyParser = require("body-parser");
+
+var app = express();
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
+
+const PORT = 4242;
+const ADDRESS = "10.4.0.49";//ip.address()
+
+var con = mysql.createConnection({
+  host: "localhost",
+  user: "root",
+  password: "",
+  database: "weightbot"
+});
+
+var myRouter = express.Router(); 
+
+var clients = []; //get ip address clients[i].remoteAddress
+
+var server = net.createServer(function(socket) 
+{
+  clients.push(socket);
+  socket.on('data', function (data) 
+  {
+    console.log(data.toString('utf8'));
+  });
+  /*for(var i = 0; i < clients.length; i++)
+  {
+    console.log(clients[i].remoteAddress);
+  }*/
+ 
+});
+server.listen(PORT, ADDRESS);
+console.log(ADDRESS+" - "+PORT);
+
+
+myRouter.route('/startLigneDetect/').get(function(req,res)
+{ 
+    broadcast("solution2.py", "10.4.0.5");
+      if(res.status(200))
+    {
+       res.json("Détection de ligne");
+    }
+    else
+    {
+      res.json("Problème pas de détection de ligne");
+    } 
+});
+
+
+myRouter.route('/callBot/').get(function(req,res)
+{ 
+    var bot;
+    con.query("SELECT * FROM bot where lastLocation=1", function (err, result, fields) 
+    {
+        for(var i = 0; i < result.length; i++)
+        {
+           bot = result[i];
+        }
+        if(bot == null)
+        {
+          //a verifier
+           con.query("SELECT id, count(id) as nbAction FROM action group by botId where done=0", function (er, r, f) 
+          {
+              var botId;
+              for(var i = 0; i < r.length; i++)
+              {
+                  if(r[i].nbAction <= r[i+1].nbAction)
+                  {
+                      botId = r[i]['Id'];
+                  }
+              }
+
+              con.query("SELECT * FROM bot where id="+botId, function (e, res, fie) 
+              {
+                for(var i = 0; i < result.length; i++)
+                {
+                    bot = res[i];
+                }
+                
+              });
+          });
+        }
+
+ 
+    });
+
+    res.setHeader('Content-Type', 'application/json');
+    res.send(JSON.stringify({ "bot": bot }));
+    //return bot;
+});
+
+var paths = [];
+var parentNodes = [];
+
+myRouter.route('/moveBot/:locationId/:botId').get(function(req,res)
+{ 
+    var locationId = parseInt(req.param('locationId'));
+    var botId = parseInt(req.param('botId'));
+  
+    var bot;
+    var location;
+
+    //Récupère le robot qu'on a recherché 
+    con.query("SELECT * FROM bot where id="+botId, function (err, result, fields) 
+    {
+      for(var i = 0; i < result.length; i++)
+      {
+        bot = result[i];
+      }
+      //Récupère le point ou aller
+      con.query("SELECT * FROM location where id="+locationId, function (err, r, fields) 
+      {
+          for(var i = 0; i < r.length; i++)
+          {
+             location = r[i];
+          }
+
+        //console.log(location['Id'] + " " +null + "" + bot['LastLocation']);
+          checkLocation(location['Id'],null,bot['LastLocation']);
+////////////////////////////////////////////////////////////////
+          //Rècupère les enfant du point ou aller
+          /*var child = location['Child'].split(',');
+           var path = [];
+           var isNull = true;
+          for(var i = 0; i < child.length; i++)
+          {
+
+            if(child[i]!='null')
+            {
+              isNull = false;
+
+              parentNodes.push(parseInt(locationId));
+              path.push(locationId);
+              path.push(parseInt(child[i]));
+            }
+          }
+
+          if(!isNull)
+          {
+             paths.push(path);  
+          }
+  
+          for(i = 0; i < paths.length; i++)
+          {
+              var c;
+              var l;
+
+              var lastId = paths[i][paths[i].length-1];
+          
+              var iterator = i;
+              //pour chaque tab recupère le dernier id ajouté
+              parentNodes.push(parseInt(lastId));
+              con.query("SELECT * FROM location where id="+lastId, function (err, res, fields) 
+              {
+
+                var endPath;
+                for(var j = 0; j < paths.length; j++)
+                {
+                  if(paths[j][paths[j].length-1] == lastId)
+                  {
+                    endPath = paths[j];
+                  }
+                }
+
+                for(var j = 0; j < res.length; j++)
+                {
+                   l = res[j];
+                }
+
+                c = l['Child'].split(',');
+                for(var j = 0; j < c.length; j++)
+                {
+                  if(c[j]!='null' && !parentNodes.includes(parseInt(c[j])))
+                  {
+                    var p = clone(endPath);
+                    p.push(parseInt(c[j]));
+                    paths.push(p);
+                  }
+                }
+              console.log(paths);
+              });
+            }*/
+      });
+    });
+});
+
+
+function checkLocation(locationId, parentLocation, locationTo)
+{
+
+  var l;
+
+  con.query("SELECT * FROM location where id="+locationId, function (err, res, fields) 
+  {
+   for(var j = 0; j < res.length; j++)
+    {
+       l = res[j];
+    }
+    var child =  l['Child'].split(',');
+
+    var isNull = true;
+
+    var endPath;
+    for(var j = 0; j < paths.length; j++)
+    {
+      if(paths[j][paths[j].length-1] ==  l['Id'])
+      {
+        endPath = paths[j];
+      }
+    }
+
+
+    parentNodes.push(parseInt(l['Id']));
+
+    for(var i = 0; i < child.length; i++)
+    {
+      if(child[i]!='null' && parentNodes.includes(parseInt(child[i])))
+      {
+        if(child[i]!=locationTo)
+        {
+          var path = [];
+          path.push(l['Id']);
+          path.push(parseInt(child[i]));
+          checkLocation(child[i], l['Id'],locationTo);
+        }
+        else
+        {
+          var path = [];
+          path.push(l['Id']);
+          path.push(parseInt(child[i]));
+        }
+        console.log(paths);
+      }
+    }   
+  });   
+}
+
+function createAction(pathsArray,botId) 
+{
+  con.connect(function(err) 
+  {
+    for(var i = 1; i < count(pathsArray); i++)
+    {
+      if(pathsArray[i+1]!=null)
+      {
+        con.query("insert into action (date,botId,locationId, done) values('"+new Date()+"',"+botId+","+pathsArray[i]+",0)", function (err, result, fields) {
+        });
+      }
+    }
+  });
+}
+
+myRouter.route('/askAction/:botIp').post(function(req,res)
+{ 
+    var action;
+    con.connect(function(err) 
+    {
+      var bot;
+      con.query("SELECT * FROM bot where ipAddress='"+req.param('botIp')+"'", function (err, result, fields) {
+
+        bot = result;
+      });
+      con.query("SELECT * FROM action where done=0 and botId="+bot.id+" order by date limit 1", function (err, result, fields) {
+
+        action = result;
+      });
+
+    });
+    
+    if(action != null)
+    {
+      /* démarrer robot */
+    }
+});
+
+
+
+myRouter.route('/endpoint/').post(function(req,res)
+{ 
+    con.connect(function(err) 
+    {
+      con.query("SELECT * FROM location", function (err, result, fields) {
+
+        console.log(result);
+      });
+    });
+    
+    if(res.status(200))
+    {
+      res.sendStatus(200);
+    }
+    else
+    {
+
+    }
+});
+
+
+myRouter.route('/stopMotor/').get(function(req,res)
+{ 
+    broadcast("stopMotor.py", "10.4.0.5");
+
+    if(res.status(200))
+    {
+       res.json("Arrêt moteurs");
+    }
+    else
+    {
+      res.json("Moteurs non arrêtés");
+    } 
+});
+
+myRouter.route('/startMotor/').get(function(req,res)
+{ 
+    broadcast("motor.py", "10.4.0.5");
+     if(res.status(200))
+    {
+       res.json("Moteurs démarrés");
+    }
+    else
+    {
+      res.json("Moteurs non démarrés");
+    } 
+});
+
+myRouter.route('/stopRobot/').get(function(req,res)
+{ 
+    broadcast("stopRobot.py", "10.4.0.5");
+      if(res.status(200))
+    {
+       res.json("Tous les scripts arrêtés");
+    }
+    else
+    {
+      res.json("Pas de scripts arrêtés");
+    } 
+});
+
+app.use(myRouter); 
+app.listen(1337, ADDRESS, function(){
+});
+
+function broadcast(message, receiver) 
+{
+  clients.forEach(function (client) 
+  {
+    if (client.remoteAddress == receiver) 
+    {
+       client.write(message);
+    }
+  });
+}
+
+
+function clone(obj){
+    try{
+        var copy = JSON.parse(JSON.stringify(obj));
+    } catch(ex){
+        alert("Vous utilisez un vieux navigateur bien pourri, qui n'est pas pris en charge par ce site");
+    }
+    return copy;
+}
